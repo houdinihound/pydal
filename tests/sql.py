@@ -270,22 +270,18 @@ class TestInsert(unittest.TestCase):
 
     def testRun(self):
         db = DAL(DEFAULT_URI, check_reserved=['all'], debug=True)
-        try:
-            db.define_table('tt', Field('aa'))
-            self.assertEqual(db.tt.insert(aa='1'), 1)
-            self.assertEqual(db.tt.insert(aa='1'), 2)
-            self.assertEqual(db.tt.insert(aa='1'), 3)
-            self.assertEqual(db(db.tt.aa == '1').count(), 3)
-            self.assertEqual(db(db.tt.aa == '2').isempty(), True)
-            self.assertEqual(db(db.tt.aa == '1').update(aa='2'), 3)
-            self.assertEqual(db(db.tt.aa == '2').count(), 3)
-            self.assertEqual(db(db.tt.aa == '2').isempty(), False)
-            self.assertEqual(db(db.tt.aa == '2').delete(), 3)
-            self.assertEqual(db(db.tt.aa == '2').isempty(), True)
-        except Exception as e:
-            print(e)
-        finally:
-            db.tt.drop()
+        db.define_table('tt', Field('aa'))
+        self.assertEqual(db.tt.insert(aa='1'), 1)
+        self.assertEqual(db.tt.insert(aa='1'), 2)
+        self.assertEqual(db.tt.insert(aa='1'), 3)
+        self.assertEqual(db(db.tt.aa == '1').count(), 3)
+        self.assertEqual(db(db.tt.aa == '2').isempty(), True)
+        self.assertEqual(db(db.tt.aa == '1').update(aa='2'), 3)
+        self.assertEqual(db(db.tt.aa == '2').count(), 3)
+        self.assertEqual(db(db.tt.aa == '2').isempty(), False)
+        self.assertEqual(db(db.tt.aa == '2').delete(), 3)
+        self.assertEqual(db(db.tt.aa == '2').isempty(), True)
+        db.tt.drop()
 
 
 class TestSelect(unittest.TestCase):
