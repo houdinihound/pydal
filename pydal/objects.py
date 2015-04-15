@@ -1511,8 +1511,8 @@ class Field(Expression):
         self.update = update
         self.authorize = authorize
         self.autodelete = autodelete
-        self.represent = (list_represent if represent is None and
-                          type in ('list:integer', 'list:string') else represent)
+        self.represent = list_represent if represent is None and \
+            type in ('list:integer', 'list:string') else represent
         self.compute = compute
         self.isattachment = True
         self.custom_store = custom_store
@@ -2076,10 +2076,18 @@ class Set(object):
     def count(self,distinct=None, cache=None):
         db = self.db
         if cache:
-            cache_model, time_expire = cache
             sql = self._count(distinct=distinct)
-            key = db._uri + '/' + sql
-            key = hashlib_md5(key).hexdigest()
+            if isinstance(cache,dict):
+                cache_model = cache['model']
+                time_expire = cache['expiration']
+                key = cache.get('key')
+                if not key:
+                    key = db._uri + '/' + sql
+                    key = hashlib_md5(key).hexdigest()
+            else:
+                cache_model, time_expire = cache
+                key = db._uri + '/' + sql
+                key = hashlib_md5(key).hexdigest()
             return cache_model(
                 key,
                 (lambda self=self,distinct=distinct: \
@@ -2096,6 +2104,16 @@ class Set(object):
                                     attributes.get('groupby',None))
         fields = adapter.expand_all(fields, tablenames)
         return adapter.select(self.query,fields,attributes)
+
+    def iterselect(self, *fields, **attributes):
+        adapter = self.db._adapter
+        tablenames = adapter.tables(self.query,
+                                    attributes.get('join',None),
+                                    attributes.get('left',None),
+                                    attributes.get('orderby',None),
+                                    attributes.get('groupby',None))
+        fields = adapter.expand_all(fields, tablenames)
+        return adapter.iterselect(self.query,fields,attributes)
 
     def nested_select(self,*fields,**attributes):
         return Expression(self.db,self._select(*fields,**attributes))
@@ -2731,13 +2749,13 @@ class Rows(object):
         mode='object' is not implemented (should return a nested
         object structure)
         """
-
+        has_serializer = self.db.has_serializer('json')
         items = [record.as_json(mode=mode, default=default,
                                 serialize=False,
-                                colnames=self.colnames) for
+                                colnames=self.colnames, datetime_to_str=not(has_serializer)) for
                  record in self]
 
-        if self.db.has_serializer('json'):
+        if has_serializer:
             custom_json = self.db.serializers.custom_json if \
                 self.db.has_serializer('custom_json') else None
             return self.db.serialize('json', items,

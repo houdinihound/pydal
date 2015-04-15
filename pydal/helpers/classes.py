@@ -119,6 +119,8 @@ class SQLCustomType(object):
         decoder=None,
         validator=None,
         _class=None,
+        widget=None,
+        represent=None
         ):
 
         self.type = type
@@ -127,6 +129,8 @@ class SQLCustomType(object):
         self.decoder = decoder or (lambda x: x)
         self.validator = validator
         self._class = _class or type
+        self.widget = widget
+        self.represent = represent
 
     def startswith(self, text=None):
         try:

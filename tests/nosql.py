@@ -15,50 +15,25 @@ if PY2:
     StringIO = StringIO.StringIO
 long = integer_types[-1]
 
-
-#for travis-ci
-DEFAULT_URI = os.environ.get('DB', 'sqlite:memory')
-print('Testing against %s engine (%s)' % (DEFAULT_URI.partition(':')[0],
-                                          DEFAULT_URI))
-
-IS_GAE = "datastore" in DEFAULT_URI
-IS_MONGODB = "mongodb" in DEFAULT_URI
-IS_IMAP = "imap" in DEFAULT_URI
+from pydal import DAL, Field
+from pydal.objects import Table
+from pydal.helpers.classes import SQLALL
+from ._adapt import DEFAULT_URI, IS_IMAP, drop, IS_GAE, IS_MONGODB
 
 if IS_IMAP:
     from pydal.adapters import IMAPAdapter
     from pydal.contrib import mockimaplib
     IMAPAdapter.driver = mockimaplib
-
-from pydal import DAL, Field
-from pydal.objects import Table
-from pydal.helpers.classes import SQLALL
-
-
-def drop(table, cascade=None):
-    # mongodb implements drop()
-    # although it seems it does not work properly
-    if (IS_GAE or IS_MONGODB or IS_IMAP):
-        # GAE drop/cleanup is not implemented
-        db = table._db
-        db(table).delete()
-        del db[table._tablename]
-        del db.tables[db.tables.index(table._tablename)]
-        db._remove_references_to(table)
-    else:
-        if cascade:
-            table.drop(cascade)
-        else:
-            table.drop()
-
-
-# setup GAE dummy database
-if IS_GAE:
+elif IS_GAE:
+    # setup GAE dummy database
     from google.appengine.ext import testbed
     gaetestbed = testbed.Testbed()
     gaetestbed.activate()
     gaetestbed.init_datastore_v3_stub()
     gaetestbed.init_memcache_stub()
+
+print 'Testing against %s engine (%s)' % (DEFAULT_URI.partition(':')[0],
+                                          DEFAULT_URI)
 
 
 ALLOWED_DATATYPES = [
@@ -86,7 +61,7 @@ def tearDownModule():
     for a in glob.glob('*.table'):
         os.unlink(a)
 
-@unittest.skipIf(IS_GAE or IS_IMAP, 'TODO: Datastore throws "AssertionError: SyntaxError not raised"')
+@unittest.skipIf(IS_IMAP, "Skip IMAP")
 class TestFields(unittest.TestCase):
 
     def testFieldName(self):
@@ -208,9 +183,10 @@ class TestFields(unittest.TestCase):
         self.assertEqual(isinstance(db.tt.insert(aa=t0), long), True)
         self.assertEqual(db().select(db.tt.aa)[0].aa, t0)
         drop(db.tt)
+        db.close()
 
 
-@unittest.skipIf(IS_GAE or IS_IMAP, 'TODO: Datastore throws "AssertionError: SyntaxError not raised"')
+@unittest.skipIf(IS_IMAP, "Skip IMAP")
 class TestTables(unittest.TestCase):
 
     def testTableNames(self):
@@ -262,7 +238,6 @@ class TestTable(unittest.TestCase):
         self.assert_('persons.firstname, persons.lastname'
                       in str(persons.ALL))
 
-    @unittest.skipIf(IS_GAE or IS_MONGODB, "No table alias for this backend")
     def testTableAlias(self):
         db = DAL(DEFAULT_URI, check_reserved=['all'])
         persons = Table(db, 'persons', Field('firstname',
@@ -273,6 +248,7 @@ class TestTable(unittest.TestCase):
 
         self.assert_(persons is not aliens)
         self.assert_(set(persons.fields) == set(aliens.fields))
+        db.close()
 
     def testTableInheritance(self):
         persons = Table(None, 'persons', Field('firstname',
@@ -297,6 +273,7 @@ class TestInsert(unittest.TestCase):
             self.assertEqual(imap.Draft[2].sender, "gumby@example.com")
             self.assertEqual(isinstance(imap.Draft[2].uid, long), True)
             self.assertEqual(imap.Draft[2].content[0]["text"], "Nurse!\r\nNurse!")
+            imap.close()
         else:
             db = DAL(DEFAULT_URI, check_reserved=['all'])
             db.define_table('tt', Field('aa'))
@@ -311,9 +288,10 @@ class TestInsert(unittest.TestCase):
             self.assertEqual(db(db.tt.aa == '2').delete(), 3)
             self.assertEqual(db(db.tt.aa == '2').isempty(), True)
             drop(db.tt)
+            db.close()
 
 
-@unittest.skipIf(IS_GAE or IS_MONGODB or IS_IMAP, 'TODO: Datastore throws "SyntaxError: Not supported (query using or)". MongoDB assertionerror 5L != 3')
+@unittest.skipIf(IS_IMAP, "Skip IMAP")
 class TestSelect(unittest.TestCase):
 
     def testRun(self):
@@ -323,8 +301,12 @@ class TestSelect(unittest.TestCase):
         self.assertEqual(isinstance(db.tt.insert(aa='2'), long), True)
         self.assertEqual(isinstance(db.tt.insert(aa='3'), long), True)
         self.assertEqual(db(db.tt.id > 0).count(), 3)
-        self.assertEqual(db(db.tt.id > 0).select(orderby=~db.tt.aa
-                          | db.tt.id)[0].aa, '3')
+        self.assertEqual(db(db.tt.aa).count(), 3)
+        self.assertEqual(db(db.tt.id).count(), 3)
+        self.assertEqual(db(db.tt.id!=None).count(), 3)
+
+        self.assertEqual(db(db.tt.id > 0).select(orderby=~db.tt.aa | db.tt.id)[0].aa, '3')
+        self.assertEqual(db(db.tt.id > 0).select(orderby=~db.tt.aa)[0].aa, '3')
         self.assertEqual(len(db(db.tt.id > 0).select(limitby=(1, 2))), 1)
         self.assertEqual(db(db.tt.id > 0).select(limitby=(1, 2))[0].aa,
                          '2')
@@ -340,9 +322,14 @@ class TestSelect(unittest.TestCase):
         self.assertEqual(db(db.tt.aa > '1')(db.tt.aa < '3').count(), 1)
         self.assertEqual(db((db.tt.aa > '1') & (db.tt.aa < '3')).count(), 1)
         self.assertEqual(db((db.tt.aa > '1') | (db.tt.aa < '3')).count(), 3)
+        # Test not operator
         self.assertEqual(db((db.tt.aa > '1') & ~(db.tt.aa > '2')).count(), 1)
         self.assertEqual(db(~(db.tt.aa > '1') & (db.tt.aa > '2')).count(), 0)
+        self.assertEqual(db(~((db.tt.aa < '1') | (db.tt.aa > '2'))).count(), 2)
+        self.assertEqual(db(~((db.tt.aa >= '1') & (db.tt.aa <= '2'))).count(), 1)
         drop(db.tt)
+        db.close()
+
 
 @unittest.skipIf(IS_IMAP, "TODO: IMAP test")
 class TestAddMethod(unittest.TestCase):
@@ -358,6 +345,8 @@ class TestAddMethod(unittest.TestCase):
         self.assertEqual(isinstance(db.tt.insert(aa='3'), long), True)
         self.assertEqual(len(db.tt.all()), 3)
         drop(db.tt)
+        db.close()
+
 
 @unittest.skipIf(IS_IMAP, "TODO: IMAP test")
 class TestBelongs(unittest.TestCase):
@@ -365,12 +354,15 @@ class TestBelongs(unittest.TestCase):
     def testRun(self):
         db = DAL(DEFAULT_URI, check_reserved=['all'])
         db.define_table('tt', Field('aa'))
-
-        self.assertEqual(isinstance(db.tt.insert(aa='1'), long), True)
+        i_id = db.tt.insert(aa='1')
+        self.assertEqual(isinstance(i_id, long), True)
         self.assertEqual(isinstance(db.tt.insert(aa='2'), long), True)
         self.assertEqual(isinstance(db.tt.insert(aa='3'), long), True)
-        self.assertEqual(db(db.tt.aa.belongs(('1', '3'))).count(),
-                         2)
+        self.assertEqual(db(db.tt.aa.belongs(('1', '3'))).count(), 2)
+        self.assertEqual(db(db.tt.aa.belongs(['1', '3'])).count(), 2)
+        self.assertEqual(db(db.tt.aa.belongs(['1', '3'])).count(), 2)
+        self.assertEqual(db(db.tt.id.belongs([i_id])).count(), 1)
+
         if not (IS_GAE or IS_MONGODB):
             self.assertEqual(db(db.tt.aa.belongs(db(db.tt.id > 2)._select(db.tt.aa))).count(), 1)
 
@@ -383,6 +375,7 @@ class TestBelongs(unittest.TestCase):
         else:
             print("Datastore/Mongodb belongs does not accept queries (skipping)")
         drop(db.tt)
+        db.close()
 
 
 @unittest.skipIf(IS_GAE or IS_IMAP, "Contains not supported on GAE Datastore. TODO: IMAP tests")
@@ -402,6 +395,7 @@ class TestContains(unittest.TestCase):
         self.assertEqual(db(db.tt.bb.contains('d')).count(), 0)
         self.assertEqual(db(db.tt.aa.contains(db.tt.bb)).count(), 1)
         drop(db.tt)
+        db.close()
 
 
 @unittest.skipIf(IS_GAE or IS_MONGODB or IS_IMAP, "Like not supported on GAE Datastore. TODO: IMAP test")
@@ -429,6 +423,8 @@ class TestLike(unittest.TestCase):
         self.assertEqual(db(db.tt.aa.like('1%')).count(), 1)
         self.assertEqual(db(db.tt.aa.like('2%')).count(), 0)
         drop(db.tt)
+        db.close()
+
 
 @unittest.skipIf(IS_IMAP, "TODO: IMAP test")
 class TestDatetime(unittest.TestCase):
@@ -446,6 +442,8 @@ class TestDatetime(unittest.TestCase):
                          21, 11, 30)).count(), 1)
         self.assertEqual(db(db.tt.aa >= datetime.datetime(1971, 1, 1)).count(), 2)
         drop(db.tt)
+        db.close()
+
 
 @unittest.skipIf(IS_GAE or IS_MONGODB or IS_IMAP, "Expressions are not supported")
 class TestExpressions(unittest.TestCase):
@@ -463,6 +461,7 @@ class TestExpressions(unittest.TestCase):
         self.assertEqual(db(db.tt.aa == 2).select(sum).first()[sum], 3)
         self.assertEqual(db(db.tt.aa == -2).select(sum).first()[sum], None)
         drop(db.tt)
+        db.close()
 
 
 @unittest.skip("JOIN queries are not supported")
@@ -533,6 +532,8 @@ class TestJoin(unittest.TestCase):
         drop(db.dog)
         self.assertEqual(len(db.person._referenced_by),0)
         drop(db.person)
+        db.close()
+
 
 class TestMinMaxSumAvg(unittest.TestCase):
     @unittest.skipIf(IS_GAE or IS_MONGODB or IS_IMAP, 'TODO: Datastore throws "AttributeError: Row object has no attribute _extra"')
@@ -555,6 +556,7 @@ class TestMinMaxSumAvg(unittest.TestCase):
         s = db.tt.aa.avg()
         self.assertEqual(db().select(s).first()[s], 2)
         drop(db.tt)
+        db.close()
 
 
 @unittest.skipIf(IS_IMAP, "Skip IMAP")
@@ -587,15 +589,11 @@ class TestMigrations(unittest.TestCase):
         if os.path.exists('.storage.table'):
             os.unlink('.storage.table')
 
+
 class TestReference(unittest.TestCase):
     @unittest.skipIf(IS_MONGODB or IS_IMAP, "TODO: MongoDB assertion error (long object has no attribute id)")
     def testRun(self):
         db = DAL(DEFAULT_URI, check_reserved=['all'])
-        if DEFAULT_URI.startswith('mssql'):
-            #multiple cascade gotcha
-            for key in ['reference','reference FK']:
-                db._adapter.types[key]=db._adapter.types[key].replace(
-                '%(on_delete_action)s','NO ACTION')
         db.define_table('tt', Field('name'), Field('aa','reference tt'))
         db.commit()
         x = db.tt.insert(name='max')
@@ -611,6 +609,8 @@ class TestReference(unittest.TestCase):
         assert z.aa == y.id
         drop(db.tt)
         db.commit()
+        db.close()
+
 
 @unittest.skipIf(IS_IMAP, "Skip IMAP")
 class TestClientLevelOps(unittest.TestCase):
@@ -634,6 +634,8 @@ class TestClientLevelOps(unittest.TestCase):
         assert len(rows7) == 1
         drop(db.tt)
         db.commit()
+        db.close()
+
 
 @unittest.skipIf(IS_IMAP, "TODO: IMAP test")
 class TestVirtualFields(unittest.TestCase):
@@ -649,6 +651,8 @@ class TestVirtualFields(unittest.TestCase):
         assert db(db.tt.id>0).select().first().a_upper == 'TEST'
         drop(db.tt)
         db.commit()
+        db.close()
+
 
 @unittest.skipIf(IS_IMAP, "TODO: IMAP test")
 class TestComputedFields(unittest.TestCase):
@@ -676,35 +680,45 @@ class TestComputedFields(unittest.TestCase):
         self.assertEqual(db.tt[id].dd,'xzx')
         drop(db.tt)
         db.commit()
+        db.close()
+
 
 @unittest.skipIf(IS_IMAP, "TODO: IMAP test")
 class TestCommonFilters(unittest.TestCase):
 
-    @unittest.skipIf(IS_MONGODB, "TODO: MongoDB Assertion error")
     def testRun(self):
         db = DAL(DEFAULT_URI, check_reserved=['all'])
-        db.define_table('t1', Field('aa'))
-        # db.define_table('t2', Field('aa'), Field('b', db.t1))
-        i1 = db.t1.insert(aa='1')
-        i2 = db.t1.insert(aa='2')
-        i3 = db.t1.insert(aa='3')
-        # db.t2.insert(aa='4', b=i1)
-        # db.t2.insert(aa='5', b=i2)
-        # db.t2.insert(aa='6', b=i2)
-        db.t1._common_filter = lambda q: db.t1.aa>'1'
+        db.define_table('t1', Field('aa', 'integer'))
+        db.define_table('t2', Field('aa', 'integer'), Field('b', db.t1))
+        i1 = db.t1.insert(aa=1)
+        i2 = db.t1.insert(aa=2)
+        i3 = db.t1.insert(aa=3)
+        db.t2.insert(aa=4, b=i1)
+        db.t2.insert(aa=5, b=i2)
+        db.t2.insert(aa=6, b=i2)
+        db.t1._common_filter = lambda q: db.t1.aa>1
         self.assertEqual(db(db.t1).count(),2)
-        # self.assertEqual(db(db.t1).count(),2)
-        # q = db.t2.b==db.t1.id
-        # q = db.t1.aa != None
-        # self.assertEqual(db(q).count(),2)
-        # self.assertEqual(db(q).count(),2)
-        # self.assertEqual(len(db(db.t1).select(left=db.t2.on(q))),3)
-        # db.t2._common_filter = lambda q: db.t2.aa<6
-        # self.assertEqual(db(q).count(),1)
-        # self.assertEqual(db(q).count(),1)
-        # self.assertEqual(len(db(db.t1).select(left=db.t2.on(q))),2)
-        # drop(db.t2)
+        self.assertEqual(db(db.t1).count(),2)
+        db.t2._common_filter = lambda q: db.t2.aa<6
+        # test delete
+        self.assertEqual(db(db.t2).count(),2)
+        db(db.t2).delete()
+        self.assertEqual(db(db.t2).count(),0)
+        db.t2._common_filter = None
+        self.assertEqual(db(db.t2).count(),1)
+        # test update
+        db.t2.insert(aa=4, b=i1)
+        db.t2.insert(aa=5, b=i2)
+        db.t2._common_filter = lambda q: db.t2.aa<6
+        self.assertEqual(db(db.t2).count(),2)
+        db(db.t2).update(aa=6)
+        self.assertEqual(db(db.t2).count(),0)
+        db.t2._common_filter = None
+        self.assertEqual(db(db.t2).count(),3)
+        drop(db.t2)
         drop(db.t1)
+        db.close()
+
 
 @unittest.skipIf(IS_IMAP, "Skip IMAP test")
 class TestImportExportFields(unittest.TestCase):
@@ -731,6 +745,8 @@ class TestImportExportFields(unittest.TestCase):
         drop(db.pet)
         drop(db.person)
         db.commit()
+        db.close()
+
 
 @unittest.skipIf(IS_IMAP, "Skip IMAP test")
 class TestImportExportUuidFields(unittest.TestCase):
@@ -757,6 +773,8 @@ class TestImportExportUuidFields(unittest.TestCase):
         drop(db.pet)
         drop(db.person)
         db.commit()
+        db.close()
+
 
 @unittest.skipIf(IS_IMAP, "Skip IMAP test")
 class TestDALDictImportExport(unittest.TestCase):
@@ -798,6 +816,7 @@ class TestDALDictImportExport(unittest.TestCase):
             db3.person.uuid.type == db.person.uuid.type
             drop(db3.person)
             db3.commit()
+            db3.close()
         except ImportError:
             pass
 
@@ -853,6 +872,11 @@ class TestDALDictImportExport(unittest.TestCase):
         drop(db6.staff)
         drop(db6.tvshow)
         db6.commit()
+        db.close()
+        db2.close()
+        db4.close()
+        db5.close()
+        db6.close()
 
 
 @unittest.skipIf(IS_IMAP, "TODO: IMAP test")
@@ -872,6 +896,7 @@ class TestSelectAsDict(unittest.TestCase):
         self.assertEqual(len(keys), 3)
         self.assertEqual(("id" in keys, "b_field" in keys, "a_field" in keys), (True, True, True))
         drop(db.a_table)
+        db.close()
 
 
 @unittest.skipIf(IS_IMAP, "TODO: IMAP test")
@@ -899,6 +924,8 @@ class TestRNameTable(unittest.TestCase):
 
         #clean up
         drop(db.easy_name)
+        db.close()
+
 
     @unittest.skip("JOIN queries are not supported")
     def testJoin(self):
@@ -968,6 +995,8 @@ class TestRNameTable(unittest.TestCase):
         drop(db.dog)
         self.assertEqual(len(db.person._referenced_by),0)
         drop(db.person)
+        db.close()
+
 
 @unittest.skipIf(IS_IMAP, "TODO: IMAP test")
 class TestRNameFields(unittest.TestCase):
@@ -1087,6 +1116,8 @@ class TestRNameFields(unittest.TestCase):
         drop(db.pet_farm)
         drop(db.person)
         drop(db.easy_name)
+        db.close()
+
 
     @unittest.skipIf(IS_GAE or IS_MONGODB, 'TODO: Datastore does not accept dict objects as json field input. MongoDB assertionerror Binary("x", 0) != "x"')
     def testRun(self):
@@ -1158,6 +1189,7 @@ class TestRNameFields(unittest.TestCase):
         self.assertEqual(isinstance(db.tt.insert(aa=t0), long), True)
         self.assertEqual(db().select(db.tt.aa)[0].aa, t0)
         drop(db.tt)
+        db.close()
 
     def testInsert(self):
         db = DAL(DEFAULT_URI, check_reserved=['all'])
@@ -1174,6 +1206,8 @@ class TestRNameFields(unittest.TestCase):
         self.assertEqual(db(db.tt.aa == '2').delete(), 3)
         self.assertEqual(db(db.tt.aa == '2').isempty(), True)
         drop(db.tt)
+        db.close()
+
 
     @unittest.skip("JOIN queries are not supported")
     def testJoin(self):
@@ -1243,6 +1277,8 @@ class TestRNameFields(unittest.TestCase):
         drop(db.dog)
         self.assertEqual(len(db.person._referenced_by),0)
         drop(db.person)
+        db.close()
+
 
 @unittest.skipIf(IS_IMAP, "TODO: IMAP test")
 class TestQuoting(unittest.TestCase):
@@ -1251,26 +1287,14 @@ class TestQuoting(unittest.TestCase):
     def testCase(self):
         return
         db = DAL(DEFAULT_URI, check_reserved=['all'], ignore_field_case=False)
-        if DEFAULT_URI.startswith('mssql'):
-            #multiple cascade gotcha
-            for key in ['reference','reference FK']:
-                db._adapter.types[key]=db._adapter.types[key].replace(
-                '%(on_delete_action)s','NO ACTION')
 
         # test table case
         t0 = db.define_table('B',
                         Field('f', 'string'))
-        try:
-            t1 = db.define_table('b',
-                                 Field('B', t0),
-                                 Field('words', 'text'))
-        except Exception as e:
-            # An error is expected when database does not support case
-            # sensitive entity names.
-            if DEFAULT_URI.startswith('sqlite:'):
-                self.assertTrue(isinstance(e, db._adapter.driver.OperationalError))
-                return
-            raise e
+        
+        t1 = db.define_table('b',
+                             Field('B', t0),
+                             Field('words', 'text'))
 
         blather = 'blah blah and so'
         t0[0] = {'f': 'content'}
@@ -1285,34 +1309,23 @@ class TestQuoting(unittest.TestCase):
         drop(t0)
 
         # test field case
-        try:
-            t0 = db.define_table('table is a test',
-                                 Field('a_a'),
-                                 Field('a_A'))
-        except Exception as e:
-            # some db does not support case sensitive field names mysql is one of them.
-            if DEFAULT_URI.startswith('mysql:'):
-                db.rollback()
-                return
-            raise e
+        t0 = db.define_table('table is a test',
+                             Field('a_a'),
+                             Field('a_A'))
 
-        t0[0] = dict(a_a = 'a_a', a_A='a_A')
+        t0[0] = dict(a_a='a_a', a_A='a_A')
 
         self.assertEqual(t0[1].a_a, 'a_a')
         self.assertEqual(t0[1].a_A, 'a_A')
 
         drop(t0)
+        db.close()
 
     def testPKFK(self):
 
         # test primary keys
 
         db = DAL(DEFAULT_URI, check_reserved=['all'], ignore_field_case=False)
-        if DEFAULT_URI.startswith('mssql'):
-            #multiple cascade gotcha
-            for key in ['reference','reference FK']:
-                db._adapter.types[key]=db._adapter.types[key].replace(
-                '%(on_delete_action)s','NO ACTION')
         # test table without surrogate key. Length must is limited to
         # 100 because of MySQL limitations: it cannot handle more than
         # 767 bytes in unique keys.
@@ -1327,17 +1340,11 @@ class TestQuoting(unittest.TestCase):
         except Exception as e:
             self.assertTrue(isinstance(e, KeyError))
 
-        if DEFAULT_URI.startswith('mssql'):
-            #there's no drop cascade in mssql
-            drop(t3)
-            drop(t4)
-            drop(t2)
-            drop(t0)
-        else:
-            drop(t0, 'cascade')
-            drop(t2)
-            drop(t3)
-            drop(t4)
+        drop(t0, 'cascade')
+        drop(t2)
+        drop(t3)
+        drop(t4)
+        db.close()
 
 
 class TestTableAndFieldCase(unittest.TestCase):
@@ -1357,7 +1364,8 @@ class TestQuotesByDefault(unittest.TestCase):
     def testme(self):
         return
 
-@unittest.skip("TODO: test enable_record_versioning with nosql db")
+
+@unittest.skipIf(IS_IMAP, "TODO: IMAP test")
 class TestRecordVersioning(unittest.TestCase):
 
     def testRun(self):
@@ -1376,9 +1384,30 @@ class TestRecordVersioning(unittest.TestCase):
         self.assertEqual(db(db.tt).count(), 1)
         self.assertEqual(len(db(db.tt_archive).select()), 2)
         self.assertEqual(db(db.tt_archive).count(), 2)
-        drop(tt)
         drop(db.tt_archive)
-        return
+        # it allows tt to be dropped
+        db.tt._before_delete = []
+        drop(tt)
+        db.close()
+
+
+@unittest.skipIf(IS_IMAP, "TODO: IMAP test")
+class TestBasicOps(unittest.TestCase):
+
+    def testRun(self):
+        db = DAL(DEFAULT_URI, check_reserved=['all'])
+        tt = db.define_table('tt', Field('name'),
+                        Field('is_active', 'boolean', default=True))
+        i_id = db.tt.insert(name='web2py1')
+        db.tt.insert(name='web2py2')
+        db(db.tt.name == 'web2py2').delete()
+        self.assertEqual(len(db(db.tt).select()), 1)
+        self.assertEquals(db(db.tt).count(), 1)
+        db(db.tt.id == i_id).update(name='web2py3')
+        self.assertEqual(len(db(db.tt).select()), 1)
+        self.assertEqual(db(db.tt).count(), 1)
+        drop(tt)
+        db.close()
 
 
 @unittest.skipIf(IS_IMAP, "TODO: IMAP test")
@@ -1396,6 +1425,8 @@ class TestUpdateInsert(unittest.TestCase):
         self.assertEqual(db(db.t0.name == 'web2py').count(), 0)
         self.assertEqual(db(db.t0.name == 'web2py2').count(), 1)
         drop(t0)
+        db.close()
+
 
 @unittest.skipIf(IS_IMAP, "TODO: IMAP test")
 class TestBulkInsert(unittest.TestCase):
@@ -1418,7 +1449,7 @@ class TestBulkInsert(unittest.TestCase):
             self.assertEqual(db(t0.name == 'web2py_%s' % pos).count(), 1)
         self.assertTrue(ctr == len(items))
         drop(t0)
-        return
+        db.close()
 
 
 if __name__ == '__main__':

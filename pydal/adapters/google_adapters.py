@@ -5,13 +5,12 @@ import re
 from .._compat import pjoin
 from .._globals import IDENTITY, THREAD_LOCAL
 from .._load import json
-from .._gae import classobj, gae, ndb, namespace_manager, Key, NDBPolyModel, \
-    PolyModel, rdbms
+from .._gae import classobj, gae, ndb, namespace_manager, NDBPolyModel, rdbms
 from ..objects import Table, Field, Expression, Query
 from ..helpers.classes import SQLCustomType, SQLALL, \
     Reference, UseDatabaseStoredFile
 from ..helpers.methods import use_common_filters, xorify
-from ..helpers.gae import NDBDecimalProperty, GAEDecimalProperty
+from ..helpers.gae import NDBDecimalProperty
 from .base import NoSQLAdapter
 from .mysql import MySQLAdapter
 
@@ -20,6 +19,13 @@ class GoogleSQLAdapter(UseDatabaseStoredFile, MySQLAdapter):
     uploads_in_blob = True
 
     REGEX_URI = re.compile('^(?P<instance>.*)/(?P<db>.*)$')
+
+    def clear_cache(self):
+        ndb.get_context().clear_cache()
+
+    def ignore_cache_for(self, entities = None):
+        entities = entities or []
+        ndb.get_context().set_cache_policy(lambda key: key.kind() not in entities)
 
     def __init__(self, db, uri='google:sql://realm:domain/database',
                  pool_size=0, folder=None, db_codec='UTF-8',
@@ -148,7 +154,10 @@ class GoogleDatastoreAdapter(NoSQLAdapter):
         elif fieldtype == 'id' and tablename:
             if isinstance(obj, list):
                 return [self.represent(item,fieldtype,tablename) for item in obj]
-            return ndb.Key(tablename, long(obj))
+            elif obj is None:
+                return None
+            else:
+                return ndb.Key(tablename, long(obj))
         elif fieldtype == "json":
             if self.db.has_serializer('json'):
                 return self.db.serialize('json', obj)
@@ -237,8 +246,11 @@ class GoogleDatastoreAdapter(NoSQLAdapter):
                 return self.represent(expression,field_type)
         elif isinstance(expression,(list,tuple)):
             return ','.join([self.represent(item,field_type) for item in expression])
+        elif hasattr(expression, "_FilterNode__name"):
+            # check for _FilterNode__name to avoid explicit import of FilterNode
+            return expression
         else:
-            raise NotImplemtedError
+            raise NotImplementedError
 
     def AND(self,first,second):
         first = self.expand(first)
@@ -265,12 +277,12 @@ class GoogleDatastoreAdapter(NoSQLAdapter):
         }
 
     def gaef(self,first, op, second):
-        value = self.represent(second,first.type,first._tablename)
         name = first.name if first.name != 'id' else 'key'
-        if name == 'key' and op in ('>','!=') and second in (0,'0'):
+        if name == 'key' and op in ('>','!=') and second in (0,'0', None):
             return  None
-        gfield = getattr(first.table._tableobj, name)
-        token = self.GAE_FILTER_OPTIONS[op](gfield,value)
+        field = getattr(first.table._tableobj, name)
+        value = self.represent(second,first.type,first._tablename)
+        token = self.GAE_FILTER_OPTIONS[op](field,value)
         return token
 
     def EQ(self,first,second=None):
@@ -295,7 +307,7 @@ class GoogleDatastoreAdapter(NoSQLAdapter):
         return '-%s' % first.name
 
     def COMMA(self,first,second):
-        return '%s, %s' % (first.name,second.name)
+        return '%s, %s' % (first,second)
 
     def BELONGS(self,first,second=None):
         if not isinstance(second,(list, tuple, set)):
@@ -310,8 +322,28 @@ class GoogleDatastoreAdapter(NoSQLAdapter):
             raise SyntaxError("Not supported")
         return self.gaef(first,'=',second)
 
-    def NOT(self,first):
-        raise NotImplementedError
+    def NOT(self, first):
+        op, f, s = first.op, first.first, first.second
+        if op in [self.OR, self.AND]:
+            not_op = self.AND if op == self.OR else self.OR
+            r = not_op(self.NOT(f), self.NOT(s))
+        elif op == self.EQ:
+            r = self.gaef(f, '!=', s)
+        elif op == self.NE:
+            r = self.gaef(f, '==', s)
+        elif op == self.LT:
+            r = self.gaef(f, '>=', s)
+        elif op == self.LE:
+            r = self.gaef(f, '>', s)
+        elif op == self.GT:
+            r = self.gaef(f, '<=', s)
+        elif op == self.GE:
+            r = self.gaef(f, '<', s)
+        else:
+            # TODO the IN operator must be split into a sequence of
+            # (field!=value) AND (field!=value) AND ...
+            raise NotImplementedError
+        return r
 
     def truncate(self,table,mode):
         self.db(self.db._adapter.id_query(table)).delete()
@@ -397,22 +429,21 @@ class GoogleDatastoreAdapter(NoSQLAdapter):
                 raise SyntaxError('Set: no groupby in appengine')
             orderby = args_get('orderby', False)
             if orderby:
-                ### THIS REALLY NEEDS IMPROVEMENT !!!
                 if isinstance(orderby, (list, tuple)):
                     orderby = xorify(orderby)
                 if isinstance(orderby,Expression):
                     orderby = self.expand(orderby)
                 orders = orderby.split(', ')
+                tbl = tableobj
                 for order in orders:
-                    #TODO There must be a better way
-                    def make_order(o):
-                        s = str(o)
-                        desc = s[0] == '-'
-                        s = (desc and s[1:]) or s
-                        return  (desc and  -getattr(tableobj, s)) or getattr(tableobj, s)
-                    orders = {'-id':-tableobj._key,'id':tableobj._key}
-                    _order = orders.get(order, make_order(order))
-                    items = items.order(_order)
+                    order = str(order)
+                    desc = order[:1] == '-'
+                    name = order[1 if desc else 0:].split('.')[-1]
+                    if name == 'id':
+                        o = -tbl._key if desc else tbl._key
+                    else:
+                        o = -getattr(tbl, name) if desc else getattr(tbl, name)
+                    items = items.order(o)
 
             if args_get('limitby', None):
                 (lmin, lmax) = attributes['limitby']

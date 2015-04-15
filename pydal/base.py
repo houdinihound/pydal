@@ -122,6 +122,7 @@ For more info::
     help(Field)
 
 """
+
 import threading
 import socket
 import urllib
@@ -137,9 +138,9 @@ from ._compat import PY2, pickle, hashlib_md5, pjoin, ogetattr, osetattr, \
 from ._globals import GLOBAL_LOCKER, THREAD_LOCAL, DEFAULT, GLOBALS
 from ._load import OrderedDict
 from .helpers.classes import SQLCallableList
-from .helpers.methods import hide_password, smart_query, auto_validators
-from .helpers.regex import REGEX_PYTHON_KEYWORDS, REGEX_DBNAME, \
-    REGEX_SEARCH_PATTERN, REGEX_SQUARE_BRACKETS
+from .helpers.methods import hide_password, smart_query, auto_validators, \
+    auto_represent
+from .helpers.regex import REGEX_PYTHON_KEYWORDS, REGEX_DBNAME, REGEX_SEARCH_PATTERN, REGEX_SQUARE_BRACKETS
 from .objects import Table, Field, Row, Set
 from .adapters import ADAPTERS
 from .adapters.base import BaseAdapter
@@ -838,6 +839,8 @@ class DAL(object):
         for field in table:
             if field.requires == DEFAULT:
                 field.requires = auto_validators(field)
+            if field.represent is None:
+                field.represent = auto_represent(field)
 
         migrate = self._migrate_enabled and args_get('migrate',self._migrate)
         if migrate and not self._uri in (None,'None') \

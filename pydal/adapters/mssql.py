@@ -74,6 +74,8 @@ class MSSQLAdapter(BaseAdapter):
             what = 'LEN'
         return "%s(%s)" % (what, self.expand(first))
 
+    def LENGTH(self, first):
+        return "LEN(%s)" % self.expand(first)
 
     def select_limitby(self, sql_s, sql_f, sql_t, sql_w, sql_o, limitby):
         if limitby:
@@ -88,10 +90,12 @@ class MSSQLAdapter(BaseAdapter):
     REGEX_URI = re.compile('^(?P<user>[^:@]+)(\:(?P<password>[^@]*))?@(?P<host>[^\:/]+)(\:(?P<port>[0-9]+))?/(?P<db>[^\?]+)(\?(?P<urlargs>.*))?$')
     REGEX_ARGPATTERN = re.compile('(?P<argkey>[^=]+)=(?P<argvalue>[^&]*)')
 
-    def __init__(self,db,uri,pool_size=0,folder=None,db_codec ='UTF-8',
+    def __init__(self, db, uri, pool_size=0, folder=None, db_codec='UTF-8',
                  credential_decoder=IDENTITY, driver_args={},
                  adapter_args={}, do_connect=True, srid=4326,
                  after_connection=None):
+        self.TRUE_exp = '1=1'
+        self.FALSE_exp = '1=0'
         self.db = db
         self.dbengine = "mssql"
         self.uri = uri
@@ -103,7 +107,7 @@ class MSSQLAdapter(BaseAdapter):
         self.srid = srid
         self.find_or_make_work_folder()
         # ## read: http://bytes.com/groups/python/460325-cx_oracle-utf8
-        ruri = uri.split('://',1)[1]
+        ruri = uri.split('://', 1)[1]
         if '@' not in ruri:
             try:
                 m = self.REGEX_DSN.match(ruri)
@@ -148,16 +152,16 @@ class MSSQLAdapter(BaseAdapter):
             cnxn = 'SERVER=%s;PORT=%s;DATABASE=%s;UID=%s;PWD=%s;%s' \
                 % (host, port, db, user, password, urlargs)
         def connector(cnxn=cnxn,driver_args=driver_args):
-            return self.driver.connect(cnxn,**driver_args)
+            return self.driver.connect(cnxn, **driver_args)
         self.connector = connector
         if do_connect: self.reconnect()
 
-    def lastrowid(self,table):
+    def lastrowid(self, table):
         #self.execute('SELECT @@IDENTITY;')
         self.execute('SELECT SCOPE_IDENTITY();')
         return long(self.cursor.fetchone()[0])
 
-    def rowslice(self,rows,minimum=0,maximum=None):
+    def rowslice(self, rows, minimum=0, maximum=None):
         if maximum is None:
             return rows[minimum:]
         return rows[minimum:maximum]
@@ -280,33 +284,33 @@ class MSSQL4Adapter(MSSQLAdapter):
     """
 
     types = {
-    'boolean': 'BIT',
-    'string': 'VARCHAR(%(length)s)',
-    'text': 'VARCHAR(MAX)',
-    'json': 'VARCHAR(MAX)',
-    'password': 'VARCHAR(%(length)s)',
-    'blob': 'IMAGE',
-    'upload': 'VARCHAR(%(length)s)',
-    'integer': 'INT',
-    'bigint': 'BIGINT',
-    'float': 'FLOAT',
-    'double': 'FLOAT',
-    'decimal': 'NUMERIC(%(precision)s,%(scale)s)',
-    'date': 'DATETIME',
-    'time': 'TIME(7)',
-    'datetime': 'DATETIME',
-    'id': 'INT IDENTITY PRIMARY KEY',
-    'reference': 'INT NULL, CONSTRAINT %(constraint_name)s FOREIGN KEY (%(field_name)s) REFERENCES %(foreign_key)s ON DELETE %(on_delete_action)s',
-    'list:integer': 'VARCHAR(MAX)',
-    'list:string': 'VARCHAR(MAX)',
-    'list:reference': 'VARCHAR(MAX)',
-    'geometry': 'geometry',
-    'geography': 'geography',
-    'big-id': 'BIGINT IDENTITY PRIMARY KEY',
-    'big-reference': 'BIGINT NULL, CONSTRAINT %(constraint_name)s FOREIGN KEY (%(field_name)s) REFERENCES %(foreign_key)s ON DELETE %(on_delete_action)s',
-    'reference FK': ', CONSTRAINT FK_%(constraint_name)s FOREIGN KEY (%(field_name)s) REFERENCES %(foreign_key)s ON DELETE %(on_delete_action)s',
-    'reference TFK': ' CONSTRAINT FK_%(foreign_table)s_PK FOREIGN KEY (%(field_name)s) REFERENCES %(foreign_table)s (%(foreign_key)s) ON DELETE %(on_delete_action)s',
-     }
+        'boolean': 'BIT',
+        'string': 'VARCHAR(%(length)s)',
+        'text': 'VARCHAR(MAX)',
+        'json': 'VARCHAR(MAX)',
+        'password': 'VARCHAR(%(length)s)',
+        'blob': 'IMAGE',
+        'upload': 'VARCHAR(%(length)s)',
+        'integer': 'INT',
+        'bigint': 'BIGINT',
+        'float': 'FLOAT',
+        'double': 'FLOAT',
+        'decimal': 'NUMERIC(%(precision)s,%(scale)s)',
+        'date': 'DATETIME',
+        'time': 'TIME(7)',
+        'datetime': 'DATETIME',
+        'id': 'INT IDENTITY PRIMARY KEY',
+        'reference': 'INT NULL, CONSTRAINT %(constraint_name)s FOREIGN KEY (%(field_name)s) REFERENCES %(foreign_key)s ON DELETE %(on_delete_action)s',
+        'list:integer': 'VARCHAR(MAX)',
+        'list:string': 'VARCHAR(MAX)',
+        'list:reference': 'VARCHAR(MAX)',
+        'geometry': 'geometry',
+        'geography': 'geography',
+        'big-id': 'BIGINT IDENTITY PRIMARY KEY',
+        'big-reference': 'BIGINT NULL, CONSTRAINT %(constraint_name)s FOREIGN KEY (%(field_name)s) REFERENCES %(foreign_key)s ON DELETE %(on_delete_action)s',
+        'reference FK': ', CONSTRAINT FK_%(constraint_name)s FOREIGN KEY (%(field_name)s) REFERENCES %(foreign_key)s ON DELETE %(on_delete_action)s',
+        'reference TFK': ' CONSTRAINT FK_%(foreign_table)s_PK FOREIGN KEY (%(field_name)s) REFERENCES %(foreign_table)s (%(foreign_key)s) ON DELETE %(on_delete_action)s',
+    }
 
     def select_limitby(self, sql_s, sql_f, sql_t, sql_w, sql_o, limitby):
         if limitby:
@@ -325,7 +329,7 @@ class MSSQL4Adapter(MSSQLAdapter):
         return 'SELECT %s %s FROM %s%s%s;' % \
                 (sql_s, sql_f, sql_t, sql_w, sql_o)
 
-    def rowslice(self,rows,minimum=0,maximum=None):
+    def rowslice(self, rows, minimum=0, maximum=None):
         return rows
 
 
@@ -333,7 +337,7 @@ class MSSQL2Adapter(MSSQLAdapter):
     drivers = ('pyodbc',)
 
     types = {
-        'boolean': 'CHAR(1)',
+        'boolean': 'BIT',
         'string': 'NVARCHAR(%(length)s)',
         'text': 'NTEXT',
         'json': 'NTEXT',
@@ -353,19 +357,21 @@ class MSSQL2Adapter(MSSQLAdapter):
         'list:integer': 'NTEXT',
         'list:string': 'NTEXT',
         'list:reference': 'NTEXT',
+        'geometry': 'geometry',
+        'geography': 'geography',
         'big-id': 'BIGINT IDENTITY PRIMARY KEY',
         'big-reference': 'BIGINT, CONSTRAINT %(constraint_name)s FOREIGN KEY (%(field_name)s) REFERENCES %(foreign_key)s ON DELETE %(on_delete_action)s',
         'reference FK': ', CONSTRAINT FK_%(constraint_name)s FOREIGN KEY (%(field_name)s) REFERENCES %(foreign_key)s ON DELETE %(on_delete_action)s',
         'reference TFK': ' CONSTRAINT FK_%(foreign_table)s_PK FOREIGN KEY (%(field_name)s) REFERENCES %(foreign_table)s (%(foreign_key)s) ON DELETE %(on_delete_action)s',
-        }
+    }
 
     def represent(self, obj, fieldtype):
         value = BaseAdapter.represent(self, obj, fieldtype)
-        if fieldtype in ('string','text', 'json') and value[:1]=="'":
-            value = 'N'+value
+        if fieldtype in ('string', 'text', 'json') and value[:1] == "'":
+            value = 'N' + value
         return value
 
-    def execute(self,a):
+    def execute(self, a):
         return self.log_execute(a.decode('utf8'))
 
 
@@ -412,7 +418,7 @@ class VerticaAdapter(MSSQLAdapter):
         return 'SELECT %s %s FROM %s%s%s;' % \
             (sql_s, sql_f, sql_t, sql_w, sql_o)
 
-    def lastrowid(self,table):
+    def lastrowid(self, table):
         self.execute('SELECT LAST_INSERT_ID();')
         return long(self.cursor.fetchone()[0])
 

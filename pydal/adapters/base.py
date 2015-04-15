@@ -88,6 +88,7 @@ class BaseAdapter(with_metaclass(AdapterMeta, ConnectionPool)):
     FALSE = 'F'
     T_SEP = ' '
     QUOTE_TEMPLATE = '"%s"'
+    test_query = 'SELECT 1;'
 
 
     types = {
@@ -683,8 +684,20 @@ class BaseAdapter(with_metaclass(AdapterMeta, ConnectionPool)):
     def PRIMARY_KEY(self, key):
         return 'PRIMARY KEY(%s)' % key
 
+    # SQL statement for dropping table
     def _drop(self, table, mode):
         return ['DROP TABLE %s;' % table.sqlsafe]
+
+    # PYDAL cleanup
+    def _drop_cleanup(self, table):
+        db = table._db
+        del db[table._tablename]
+        del db.tables[db.tables.index(table._tablename)]
+        db._remove_references_to(table)
+        if table._dbt:
+            self.file_delete(table._dbt)
+            self.log('success!\n', table)
+        return
 
     def drop(self, table, mode=''):
         db = table._db
@@ -694,12 +707,8 @@ class BaseAdapter(with_metaclass(AdapterMeta, ConnectionPool)):
                 self.log(query + '\n', table)
             self.execute(query)
         db.commit()
-        del db[table._tablename]
-        del db.tables[db.tables.index(table._tablename)]
-        db._remove_references_to(table)
-        if table._dbt:
-            self.file_delete(table._dbt)
-            self.log('success!\n', table)
+        self._drop_cleanup(table)
+        return
 
     def _insert(self, table, fields):
         table_rname = table.sqlsafe
@@ -1198,7 +1207,10 @@ class BaseAdapter(with_metaclass(AdapterMeta, ConnectionPool)):
     def _fetchall(self):
         return self.cursor.fetchall()
 
-    def _select_aux(self,sql,fields,attributes):
+    def _fetchone(self):
+        return self.cursor.fetchone()
+
+    def _select_aux(self, sql, fields, attributes):
         args_get = attributes.get
         cache = args_get('cache',None)
         if not cache:
@@ -1216,7 +1228,7 @@ class BaseAdapter(with_metaclass(AdapterMeta, ConnectionPool)):
             rows = list(rows)
         limitby = args_get('limitby', None) or (0,)
         rows = self.rowslice(rows,limitby[0],None)
-        processor = args_get('processor',self.parse)
+        processor = args_get('processor', self.parse)
         cacheable = args_get('cacheable',False)
         return processor(rows,fields,self._colnames,cacheable=cacheable)
 
@@ -1238,6 +1250,11 @@ class BaseAdapter(with_metaclass(AdapterMeta, ConnectionPool)):
                 time_expire)
         else:
             return self._select_aux(sql,fields,attributes)
+
+    def iterselect(self, query, fields, attributes):
+        sql = self._select(query, fields, attributes)
+        cacheable = attributes.get('cacheable', False)
+        return self.iterparse(sql, fields, self._colnames, cacheable=cacheable)
 
     def _count(self, query, distinct=None):
         tablenames = self.tables(query)
@@ -1529,18 +1546,15 @@ class BaseAdapter(with_metaclass(AdapterMeta, ConnectionPool)):
         return value
 
     def parse_list_integers(self, value, field_type):
-        if not isinstance(self, NoSQLAdapter):
-            value = bar_decode_integer(value)
+        value = bar_decode_integer(value)
         return value
 
     def parse_list_references(self, value, field_type):
-        if not isinstance(self, NoSQLAdapter):
-            value = bar_decode_integer(value)
+        value = bar_decode_integer(value)
         return [self.parse_reference(r, field_type[5:]) for r in value]
 
     def parse_list_strings(self, value, field_type):
-        if not isinstance(self, NoSQLAdapter):
-            value = bar_decode_string(value)
+        value = bar_decode_string(value)
         return value
 
     def parse_id(self, value, field_type):
@@ -1582,14 +1596,84 @@ class BaseAdapter(with_metaclass(AdapterMeta, ConnectionPool)):
             'list:integer':self.parse_list_integers,
             'list:reference':self.parse_list_references,
             'list:string':self.parse_list_strings,
-            }
+        }
 
-    def parse(self, rows, fields, colnames, blob_decode=True,
-              cacheable = False):
-        from . import GoogleDatastoreAdapter
-        db = self.db
-        virtualtables = []
-        new_rows = []
+    def _parse(self, row, tmps, fields, colnames, blob_decode,
+               cacheable, fields_virtual, fields_lazy):
+        """
+        Return a parsed row
+        """
+        new_row = Row()
+        for (j,colname) in enumerate(colnames):
+            value = row[j]
+            tmp = tmps[j]
+            tablename = None
+            if tmp:
+                (tablename,fieldname,table,field,ft) = tmp
+                colset = new_row.get(tablename, None)
+                if colset is None:
+                    colset = new_row[tablename] = Row()
+
+                value = self.parse_value(value,ft,blob_decode)
+                if field.filter_out:
+                    value = field.filter_out(value)
+                colset[fieldname] = value
+
+                # for backward compatibility
+                if ft=='id' and fieldname!='id' and \
+                        not 'id' in table.fields:
+                    colset['id'] = value
+
+                if ft == 'id' and not cacheable:
+                    if self.dbengine == 'google:datastore':
+                        id = value.key.id()
+                        colset[fieldname] = id
+                        colset.gae_item = value
+                    else:
+                        id = value
+                    colset.update_record = RecordUpdater(colset,table,id)
+                    colset.delete_record = RecordDeleter(table,id)
+                    if table._db._lazy_tables:
+                        colset['__get_lazy_reference__'] = LazyReferenceGetter(table, id)
+                    for rfield in table._referenced_by:
+                        referee_link = self.db._referee_name and \
+                            self.db._referee_name % dict(
+                            table=rfield.tablename,field=rfield.name)
+                        if referee_link and not referee_link in colset:
+                            colset[referee_link] = LazySet(rfield,id)
+            else:
+                if not '_extra' in new_row:
+                    new_row['_extra'] = Row()
+                new_row['_extra'][colname] = \
+                    self.parse_value(value,
+                                     fields[j].type,blob_decode)
+                new_column_name = \
+                    REGEX_SELECT_AS_PARSER.search(colname)
+                if not new_column_name is None:
+                    column_name = new_column_name.groups(0)
+                    setattr(new_row,column_name[0],value)
+
+        if tablename in fields_virtual:
+            for f,v in fields_virtual[tablename]:
+                try:
+                    new_row[f] = v.f(new_row)
+                except AttributeError:
+                    pass # not enough fields to define virtual field
+            for f,v in fields_lazy[tablename]:
+                try:
+                    new_row[f] = (v.handler or VirtualCommand)(v.f, new_row)
+                except AttributeError:
+                    pass # not enough fields to define virtual field
+        return new_row
+
+    def _parse_expand_colnames(self, colnames):
+        """
+        - Expand a list of colnames into a list of
+          (tablename, fieldname, table_obj, field_obj, field_type)
+        - Create a list of table for virtual/lazy fields
+        """
+        fields_virtual = {}
+        fields_lazy = {}
         tmps = []
         for colname in colnames:
             col_m = self.REGEX_TABLE_DOT_FIELD.match(colname)
@@ -1597,87 +1681,31 @@ class BaseAdapter(with_metaclass(AdapterMeta, ConnectionPool)):
                 tmps.append(None)
             else:
                 tablename, fieldname = col_m.groups()
-                table = db[tablename]
+                table = self.db[tablename]
                 field = table[fieldname]
                 ft = field.type
                 tmps.append((tablename, fieldname, table, field, ft))
-        for (i,row) in enumerate(rows):
-            new_row = Row()
-            for (j,colname) in enumerate(colnames):
-                value = row[j]
-                tmp = tmps[j]
-                if tmp:
-                    (tablename,fieldname,table,field,ft) = tmp
-                    colset = new_row.get(tablename, None)
-                    if colset is None:
-                        colset = new_row[tablename] = Row()
-                        if tablename not in virtualtables:
-                            virtualtables.append(tablename)
-                    value = self.parse_value(value,ft,blob_decode)
-                    if field.filter_out:
-                        value = field.filter_out(value)
-                    colset[fieldname] = value
+                if tablename not in fields_virtual:
+                    fields_virtual[tablename] = [(f,v) for (f,v) in table.iteritems()
+                                                 if isinstance(v,FieldVirtual)]
+                    fields_lazy[tablename] = [(f,v) for (f,v) in table.iteritems()
+                                              if isinstance(v,FieldMethod)]
+        return (fields_virtual, fields_lazy, tmps)
 
-                    # for backward compatibility
-                    if ft=='id' and fieldname!='id' and \
-                            not 'id' in table.fields:
-                        colset['id'] = value
-
-                    if ft == 'id' and not cacheable:
-                        # temporary hack to deal with
-                        # GoogleDatastoreAdapter
-                        # references
-                        if GoogleDatastoreAdapter and isinstance(self, GoogleDatastoreAdapter):
-                            id = value.key.id()
-                            colset[fieldname] = id
-                            colset.gae_item = value
-                        else:
-                            id = value
-                        colset.update_record = RecordUpdater(colset,table,id)
-                        colset.delete_record = RecordDeleter(table,id)
-                        if table._db._lazy_tables:
-                            colset['__get_lazy_reference__'] = LazyReferenceGetter(table, id)
-                        for rfield in table._referenced_by:
-                            referee_link = db._referee_name and \
-                                db._referee_name % dict(
-                                table=rfield.tablename,field=rfield.name)
-                            if referee_link and not referee_link in colset:
-                                colset[referee_link] = LazySet(rfield,id)
-                else:
-                    if not '_extra' in new_row:
-                        new_row['_extra'] = Row()
-                    new_row['_extra'][colname] = \
-                        self.parse_value(value,
-                                         fields[j].type,blob_decode)
-                    new_column_name = \
-                        REGEX_SELECT_AS_PARSER.search(colname)
-                    if not new_column_name is None:
-                        column_name = new_column_name.groups(0)
-                        setattr(new_row,column_name[0],value)
+    def parse(self, rows, fields, colnames, blob_decode=True,
+              cacheable = False):
+        new_rows = []
+        (fields_virtual, fields_lazy, tmps) = self._parse_expand_colnames(colnames)
+        for row in rows:
+            new_row = self._parse(row, tmps, fields,
+                                  colnames, blob_decode, cacheable,
+                                  fields_virtual, fields_lazy)
             new_rows.append(new_row)
-        rowsobj = Rows(db, new_rows, colnames, rawrows=rows)
+        rowsobj = Rows(self.db, new_rows, colnames, rawrows=rows)
 
-
-        for tablename in virtualtables:
-            table = db[tablename]
-            fields_virtual = [(f,v) for (f,v) in table.iteritems()
-                              if isinstance(v,FieldVirtual)]
-            fields_lazy = [(f,v) for (f,v) in table.iteritems()
-                           if isinstance(v,FieldMethod)]
-            if fields_virtual or fields_lazy:
-                for row in rowsobj.records:
-                    box = row[tablename]
-                    for f,v in fields_virtual:
-                        try:
-                            box[f] = v.f(row)
-                        except AttributeError:
-                            pass # not enough fields to define virtual field
-                    for f,v in fields_lazy:
-                        try:
-                            box[f] = (v.handler or VirtualCommand)(v.f,row)
-                        except AttributeError:
-                            pass # not enough fields to define virtual field
-
+        # Old stype virtual fields
+        for tablename in fields_virtual.keys():
+            table = self.db[tablename]
             ### old style virtual fields
             for item in table.virtualfields:
                 try:
@@ -1686,6 +1714,33 @@ class BaseAdapter(with_metaclass(AdapterMeta, ConnectionPool)):
                     # to avoid breaking virtualfields when partial select
                     pass
         return rowsobj
+
+    def iterparse(self, sql, fields, colnames, blob_decode=True,
+                  cacheable=False):
+        """
+        Iterator to parse one row at a time.
+        It doen't support the old style virtual fields
+        """
+        (fields_virtual, fields_lazy, tmps) = self._parse_expand_colnames(colnames)
+        self.execute(sql)
+        db_row = self._fetchone()
+        while db_row is not None:
+        # _fetchone can be accomplished by iterating over the cursor too
+        # for db_row in self.cursor:
+            row = self._parse(db_row, tmps, fields,
+                              colnames, blob_decode, cacheable,
+                              fields_virtual, fields_lazy)
+            # The following is to translate
+            # <Row {'t0': {'id': 1L, 'name': 'web2py'}}>
+            # in
+            # <Row {'id': 1L, 'name': 'web2py'}>
+            # normally accomplished by Rows.__get_item__
+            keys = row.keys()
+            if len(keys) == 1 and keys[0] != '_extra':
+                row = row[row.keys()[0]]
+            yield row
+            db_row = self._fetchone()
+        return
 
     def common_filter(self, query, tablenames):
         tenant_fieldname = self.db._request_tenant
@@ -1840,6 +1895,14 @@ class NoSQLAdapter(BaseAdapter):
         """
         pass
 
+    def parse_list_integers(self, value, field_type):
+        return value
+
+    def parse_list_references(self, value, field_type):
+        return [self.parse_reference(r, field_type[5:]) for r in value]
+
+    def parse_list_strings(self, value, field_type):
+        return value
 
     # these functions should never be called!
     def OR(self,first,second): raise SyntaxError("Not supported")
@@ -1863,7 +1926,6 @@ class NoSQLAdapter(BaseAdapter):
     def PRIMARY_KEY(self,key):  raise SyntaxError("Not supported")
     def ILIKE(self,first,second): raise SyntaxError("Not supported")
     def drop(self,table,mode):  raise SyntaxError("Not supported")
-    def alias(self,table,alias): raise SyntaxError("Not supported")
     def migrate_table(self,*a,**b): raise SyntaxError("Not supported")
     def distributed_transaction_begin(self,key): raise SyntaxError("Not supported")
     def prepare(self,key): raise SyntaxError("Not supported")

@@ -68,6 +68,7 @@ class MongoDBAdapter(NoSQLAdapter):
         self.db_codec = 'UTF-8'
         self._after_connection = after_connection
         self.pool_size = pool_size
+        self.find_or_make_work_folder()
         #this is the minimum amount of replicates that it should wait
         # for on insert/update
         self.minimumreplication = adapter_args.get('minimumreplication', 0)
@@ -75,7 +76,7 @@ class MongoDBAdapter(NoSQLAdapter):
         # but now the default is
         # synchronous, except when overruled by either this default or
         # function parameter
-        self.safe = adapter_args.get('safe', True)
+        self.safe = 1 if adapter_args.get('safe', True) else 0
 
         if isinstance(m, tuple):
             m = {"database": m[1]}
@@ -88,7 +89,7 @@ class MongoDBAdapter(NoSQLAdapter):
                 Connection = self.driver.MongoClient
             else:
                 Connection = self.driver.Connection
-            return Connection(uri)[m.get('database')]
+            return Connection(uri, w=self.safe)[m.get('database')]
 
         self.reconnect(connector, cursor=False)
 
@@ -190,6 +191,7 @@ class MongoDBAdapter(NoSQLAdapter):
                      polymodel=None, isCapped=False):
         if isCapped:
             raise RuntimeError("Not implemented")
+        table._dbt = None
 
     def count(self, query, distinct=None, snapshot=True):
         if distinct:
@@ -250,17 +252,21 @@ class MongoDBAdapter(NoSQLAdapter):
     def drop(self, table, mode=''):
         ctable = self.connection[table._tablename]
         ctable.drop()
+        self._drop_cleanup(table)
+        return
+
+    def _get_safe(self, val=None):
+        if val is None:
+            return self.safe
+        return 1 if val else 0
 
     def truncate(self, table, mode, safe=None):
-        if safe == None:
-            safe = self.safe
         ctable = self.connection[table._tablename]
-        ctable.remove(None, safe=True)
+        ctable.remove(None, w=self._get_safe(safe))
 
     def select(self, query, fields, attributes, count=False,
                snapshot=False):
         mongofields_dict = self.SON()
-        mongoqry_dict = {}
         new_fields, mongosort_list = [], []
         # try an orderby attribute
         orderby = attributes.get('orderby', False)
@@ -274,7 +280,7 @@ class MongoDBAdapter(NoSQLAdapter):
                 self.db.logger.warn(
                     'select attribute not implemented: %s' % key)
         if limitby:
-            limitby_skip, limitby_limit = limitby[0], int(limitby[1])
+            limitby_skip, limitby_limit = limitby[0], int(limitby[1]) - 1
         else:
             limitby_skip = limitby_limit = 0
         if orderby:
@@ -356,8 +362,6 @@ class MongoDBAdapter(NoSQLAdapter):
         For safety, we use by default synchronous requests"""
 
         values = dict()
-        if safe is None:
-            safe = self.safe
         ctable = self.connection[table._tablename]
         for k, v in fields:
             if not k.name in ["id", "safe"]:
@@ -365,12 +369,10 @@ class MongoDBAdapter(NoSQLAdapter):
                 fieldtype = table[k.name].type
                 values[fieldname] = self.represent(v, fieldtype)
 
-        ctable.insert(values, safe=safe)
+        ctable.insert(values, w=self._get_safe(safe))
         return long(str(values['_id']), 16)
 
     def update(self, tablename, query, fields, safe=None):
-        if safe == None:
-            safe = self.safe
         # return amount of adjusted rows or zero, but no exceptions
         # @ related not finding the result
         if not isinstance(query, Query):
@@ -378,6 +380,11 @@ class MongoDBAdapter(NoSQLAdapter):
         amount = self.count(query, False)
         if not isinstance(query, Query):
             raise SyntaxError("Not Supported")
+
+        if query:
+            if use_common_filters(query):
+                query = self.common_filter(query,[tablename])
+
         filter = None
         if query:
             filter = self.expand(query)
@@ -386,7 +393,7 @@ class MongoDBAdapter(NoSQLAdapter):
                   k, v in fields if (not k.name in ("_id", "id")))}
         try:
             result = self.connection[tablename].update(filter,
-                       modify, multi=True, safe=safe)
+                       modify, multi=True, w=self._get_safe(safe))
             if safe:
                 try:
                     # if result count is available fetch it
@@ -400,15 +407,16 @@ class MongoDBAdapter(NoSQLAdapter):
             raise RuntimeError("uncaught exception when updating rows: %s" % e)
 
     def delete(self, tablename, query, safe=None):
-        if safe is None:
-            safe = self.safe
         amount = 0
         amount = self.count(query, False)
         if not isinstance(query, Query):
             raise RuntimeError("query type %s is not supported" % \
                                type(query))
+        if query:
+            if use_common_filters(query):
+                query = self.common_filter(query,[tablename])
         filter = self.expand(query)
-        self.connection[tablename].remove(filter, safe=safe)
+        self.connection[tablename].remove(filter, w=self._get_safe(safe))
         return amount
 
     def bulk_insert(self, table, items):
@@ -419,9 +427,19 @@ class MongoDBAdapter(NoSQLAdapter):
         #print "in invert first=%s" % first
         return '-%s' % self.expand(first)
 
-    # TODO This will probably not work:(
     def NOT(self, first):
-        return {'$not': self.expand(first)}
+        op = self.expand(first)
+        op_k = op.keys()[0]
+        op_body = op[op_k]
+        if type(op_body) is list:
+            # apply De Morgan law for and/or
+            # not(A and B) -> not(A) or not(B)
+            # not(A or B)  -> not(A) and not(B)
+            not_op = '$and' if op_k == '$or' else '$or'
+            r = {not_op: [self.NOT(first.first), self.NOT(first.second)]}
+        else:
+            r = {op_k: {'$not': op_body}}
+        return r
 
     def AND(self,first,second):
         # pymongo expects: .find({'$and': [{'x':'1'}, {'y':'2'}]})
