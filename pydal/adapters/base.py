@@ -1433,15 +1433,12 @@ class BaseAdapter(with_metaclass(AdapterMeta, ConnectionPool)):
         if PY2:
             if not isinstance(obj, bytes):
                 obj = bytes(obj)
-                try:
-                    obj.decode(self.db_codec)
-                except:
-                    obj = obj.decode('latin1').encode(self.db_codec)
+            try:
+                obj.decode(self.db_codec)
+            except:
+                obj = obj.decode('latin1').encode(self.db_codec)
         else:
-            if isinstance(obj, bytes):
-                obj = obj.decode('utf-8')
-            if not isinstance(obj, basestring):
-                obj = str(obj)
+            obj = to_unicode(obj)
         return self.adapt(obj)
 
     def represent_exceptions(self, obj, fieldtype):
