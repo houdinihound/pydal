@@ -110,7 +110,7 @@ class Row(object):
 
     update = lambda self, *args, **kwargs:  self.__dict__.update(*args, **kwargs)
 
-    keys = lambda self: self.__dict__.keys()
+    keys = lambda self: list(self.__dict__)
 
     items = lambda self: self.__dict__.items()
 
