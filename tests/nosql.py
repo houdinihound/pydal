@@ -32,8 +32,8 @@ elif IS_GAE:
     gaetestbed.init_datastore_v3_stub()
     gaetestbed.init_memcache_stub()
 
-print 'Testing against %s engine (%s)' % (DEFAULT_URI.partition(':')[0],
-                                          DEFAULT_URI)
+print('Testing against %s engine (%s)' % (DEFAULT_URI.partition(':')[0],
+                                          DEFAULT_URI))
 
 
 ALLOWED_DATATYPES = [
@@ -1291,7 +1291,7 @@ class TestQuoting(unittest.TestCase):
         # test table case
         t0 = db.define_table('B',
                         Field('f', 'string'))
-        
+
         t1 = db.define_table('b',
                              Field('B', t0),
                              Field('words', 'text'))
