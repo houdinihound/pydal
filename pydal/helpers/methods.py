@@ -2,7 +2,7 @@
 import uuid
 import re
 
-from .._compat import iteritems
+from .._compat import iteritems, integer_types
 from .regex import REGEX_NOPASSWD, REGEX_UNPACK, REGEX_CONST_STRING, REGEX_W
 from .classes import SQLCustomType
 #from ..objects import Field, Table
@@ -72,6 +72,7 @@ def bar_encode(items):
 
 
 def bar_decode_integer(value):
+    long = integer_types[-1]
     if not hasattr(value,'split') and hasattr(value,'read'):
         value = value.read()
     return [long(x) for x in value.split('|') if x.strip()]
