@@ -410,7 +410,7 @@ class MongoDBAdapter(NoSQLAdapter):
                 amount = result.matched_count
 
             return amount
-        except Exception, e:
+        except Exception as e:
             # TODO Reverse update query to verifiy that the query succeded
             raise RuntimeError("uncaught exception when updating rows: %s" % e)
 
