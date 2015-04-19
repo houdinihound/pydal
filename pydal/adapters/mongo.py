@@ -440,7 +440,7 @@ class MongoDBAdapter(NoSQLAdapter):
 
     def NOT(self, first):
         op = self.expand(first)
-        op_k = op.keys()[0]
+        op_k = list(op)[0]
         op_body = op[op_k]
         if type(op_body) is list:
             # apply De Morgan law for and/or
