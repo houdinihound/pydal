@@ -1532,6 +1532,9 @@ class BaseAdapter(with_metaclass(AdapterMeta, ConnectionPool)):
         if PY2:
             return base64.b64decode(str(value))
         else:
+            # why in py3.3.x and psycopg2 is not bytes?
+            if not isinstance(value, bytes):
+                value = bytes(value)
             return base64.b64decode(value).decode('utf-8')
 
     def parse_decimal(self, value, field_type):
