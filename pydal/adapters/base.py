@@ -15,16 +15,16 @@ from .._compat import PY2, pjoin, exists, pickle, hashlib_md5, iterkeys, \
     string_types
 from .._globals import IDENTITY
 from .._load import portalocker, json
-from .._gae import gae
 from ..connection import ConnectionPool
 from ..objects import Expression, Field, Query, Table, Row, FieldVirtual, \
-    FieldMethod, LazyReferenceGetter, LazySet, VirtualCommand, Rows
+    FieldMethod, LazyReferenceGetter, LazySet, VirtualCommand, Rows, IterRows
 from ..helpers.regex import REGEX_NO_GREEDY_ENTITY_NAME, REGEX_TYPE, \
     REGEX_SELECT_AS_PARSER
 from ..helpers.methods import xorify, use_common_filters, bar_encode, \
     bar_decode_integer, bar_decode_string
 from ..helpers.classes import SQLCustomType, SQLALL, Reference, \
     RecordUpdater, RecordDeleter
+from ..helpers.serializers import serializers
 
 long = integer_types[-1]
 
@@ -1426,6 +1426,13 @@ class BaseAdapter(with_metaclass(AdapterMeta, ConnectionPool)):
         elif fieldtype == 'json':
             if not 'dumps' in self.driver_auto_json:
                 # always pass a string JSON string
+                obj = serializers.json(obj)
+        if not isinstance(obj, bytes):
+            obj = bytes(obj)
+        try:
+            obj.decode(self.db_codec)
+        except:
+            obj = obj.decode('latin1').encode(self.db_codec)
                 if self.db.has_serializer('json'):
                     obj = self.db.serialize('json', obj)
                 else:
@@ -1574,10 +1581,7 @@ class BaseAdapter(with_metaclass(AdapterMeta, ConnectionPool)):
                 raise RuntimeError('json data not a string')
             if PY2 and isinstance(value, unicode):
                 value = value.encode('utf-8')
-            if self.db.has_serializer('loads_json'):
-                value = self.db.serialize('loads_json', value)
-            else:
-                value = json.loads(value)
+            value = json.loads(value)
         return value
 
     def build_parsemap(self):
@@ -1679,6 +1683,7 @@ class BaseAdapter(with_metaclass(AdapterMeta, ConnectionPool)):
         tmps = []
         for colname in colnames:
             col_m = self.REGEX_TABLE_DOT_FIELD.match(colname)
+
             if not col_m:
                 tmps.append(None)
             else:
@@ -1723,26 +1728,9 @@ class BaseAdapter(with_metaclass(AdapterMeta, ConnectionPool)):
         Iterator to parse one row at a time.
         It doen't support the old style virtual fields
         """
-        (fields_virtual, fields_lazy, tmps) = self._parse_expand_colnames(colnames)
-        self.execute(sql)
-        db_row = self._fetchone()
-        while db_row is not None:
-        # _fetchone can be accomplished by iterating over the cursor too
-        # for db_row in self.cursor:
-            row = self._parse(db_row, tmps, fields,
-                              colnames, blob_decode, cacheable,
-                              fields_virtual, fields_lazy)
-            # The following is to translate
-            # <Row {'t0': {'id': 1L, 'name': 'web2py'}}>
-            # in
-            # <Row {'id': 1L, 'name': 'web2py'}>
-            # normally accomplished by Rows.__get_item__
-            keys = row.keys()
-            if len(keys) == 1 and keys[0] != '_extra':
-                row = row[row.keys()[0]]
-            yield row
-            db_row = self._fetchone()
-        return
+        return IterRows(self.db, sql, fields,
+                        colnames, blob_decode, cacheable)
+
 
     def common_filter(self, query, tablenames):
         tenant_fieldname = self.db._request_tenant
@@ -1850,11 +1838,8 @@ class NoSQLAdapter(BaseAdapter):
                 pass
             elif fieldtype == 'json':
                 if isinstance(obj, basestring):
-                    obj = to_unicode(obj)
-                    if self.db.has_serializer('loads_json'):
-                        obj = self.db.serialize('loads_json', obj)
-                    else:
-                        obj = json.loads(obj)
+                    obj = self.to_unicode(obj)
+                    obj = json.loads(obj)
             elif is_string and field_is_type('list:string'):
                 return list(map(to_unicode,obj))
             elif is_list:

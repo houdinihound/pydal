@@ -14,15 +14,19 @@ import types
 from ._compat import PY2, StringIO, ogetattr, osetattr, pjoin, exists, hashlib_md5, integer_types, basestring, iteritems, xrange
 from ._globals import GLOBALS, DEFAULT, IDENTITY, AND, OR
 from ._load import json
+from ._compat import StringIO, ogetattr, osetattr, pjoin, exists, hashlib_md5
+from ._globals import DEFAULT, IDENTITY, AND, OR
 from ._gae import Key
 from .exceptions import NotFoundException, NotAuthorizedException
 from .helpers.regex import REGEX_TABLE_DOT_FIELD, REGEX_ALPHANUMERIC, \
     REGEX_PYTHON_KEYWORDS, REGEX_STORE_PATTERN, REGEX_UPLOAD_PATTERN, \
     REGEX_CLEANUP_FN
-from .helpers.classes import Reference, MethodAdder, SQLCallableList, SQLALL
+from .helpers.classes import Reference, MethodAdder, SQLCallableList, SQLALL, \
+    Serializable
 from .helpers.methods import list_represent, bar_decode_integer, \
     bar_decode_string, bar_encode, archive_record, cleanup, \
     use_common_filters, pluralize
+from .helpers.serializers import serializers
 
 long = integer_types[-1]
 if not PY2:
@@ -33,6 +37,8 @@ DEFAULTLENGTH = {'string':512,
                  'upload':512,
                  'text':2**15,
                  'blob':2**31}
+DEFAULTLENGTH = {'string': 512, 'password': 512, 'upload': 512, 'text': 2**15,
+                 'blob': 2**31}
 
 
 class Row(object):
@@ -82,7 +88,7 @@ class Row(object):
             return ogetattr(self, key)
         except (KeyError, AttributeError, TypeError) as ae:
             try:
-                self[key] = ogetattr(self,'__get_lazy_reference__')(key)
+                self[key] = ogetattr(self, '__get_lazy_reference__')(key)
                 return self[key]
             except:
                 raise ae
@@ -212,18 +218,12 @@ class Row(object):
 
         item = self.as_dict(**kwargs)
         if serialize:
-            if hasattr(GLOBALS.get('serializers'), 'json'):
-                custom_json = GLOBALS['serializers']['custom_json'] if \
-                    hasattr(GLOBALS['serializers'], 'custom_json') else None
-                return GLOBALS['serializers']['json'](
-                    item, default=default or custom_json)
-            else:
-                return json.dumps(item)
+            return serializers.json(item)
         else:
             return item
 
 
-class Table(object):
+class Table(Serializable):
 
     """
     Represents a database table
@@ -1030,24 +1030,6 @@ class Table(object):
                     flat=flat, sanitize=sanitize))
         return table_as_dict
 
-    def as_xml(self, sanitize=True):
-        if not self._db.has_serializer('xml'):
-            raise ImportError("No xml serializers available")
-        d = self.as_dict(flat=True, sanitize=sanitize)
-        return self._db.serialize('xml', d)
-
-    def as_json(self, sanitize=True):
-        if not self._db.has_serializer('json'):
-            raise ImportError("No json serializers available")
-        d = self.as_dict(flat=True, sanitize=sanitize)
-        return self._db.serialize('json', d)
-
-    def as_yaml(self, sanitize=True):
-        if not self._db.has_serializer('yaml'):
-            raise ImportError("No YAML serializers available")
-        d = self.as_dict(flat=True, sanitize=sanitize)
-        return self._db.serialize('yaml', d)
-
     def with_alias(self, alias):
         return self._db._adapter.alias(self, alias)
 
@@ -1404,7 +1386,7 @@ class FieldMethod(object):
         self.handler = handler
 
 
-class Field(Expression):
+class Field(Expression, Serializable):
 
     Virtual = FieldVirtual
     Method = FieldMethod
@@ -1729,24 +1711,6 @@ class Field(Expression):
             d["fieldname"] = d.pop("name")
         return d
 
-    def as_xml(self, sanitize=True):
-        if not self._db.has_serializer('xml'):
-            raise ImportError("No xml serializers available")
-        d = self.as_dict(flat=True, sanitize=sanitize)
-        return self._db.serialize('xml', d)
-
-    def as_json(self, sanitize=True):
-        if not self._db.has_serializer('json'):
-            raise ImportError("No json serializers available")
-        d = self.as_dict(flat=True, sanitize=sanitize)
-        return self._db.serialize('json', d)
-
-    def as_yaml(self, sanitize=True):
-        if not self._db.has_serializer('yaml'):
-            raise ImportError("No YAML serializers available")
-        d = self.as_dict(flat=True, sanitize=sanitize)
-        return self._db.serialize('yaml', d)
-
     def __nonzero__(self):
         return True
 
@@ -1768,7 +1732,7 @@ class Field(Expression):
         return self._rname or self._db._adapter.sqlsafe_field(self.name)
 
 
-class Query(object):
+class Query(Serializable):
 
     """
     Necessary to define a set.
@@ -1891,20 +1855,8 @@ class Query(object):
         else:
             return self.__dict__
 
-    def as_xml(self, sanitize=True):
-        if not self._db.has_serializer('xml'):
-            raise ImportError("No xml serializers available")
-        d = self.as_dict(flat=True, sanitize=sanitize)
-        return self._db.serialize('xml', d)
 
-    def as_json(self, sanitize=True):
-        if not self._db.has_serializer('json'):
-            raise ImportError("No json serializers available")
-        d = self.as_dict(flat=True, sanitize=sanitize)
-        return self._db.serialize('json', d)
-
-
-class Set(object):
+class Set(Serializable):
 
     """
     Represents a set of records in the database.
@@ -1997,19 +1949,8 @@ class Set(object):
             d["db"] = {"uid": uid, "codec": codec,
                        "name": dbname, "uri": uri}
             return d
-        else: return self.__dict__
-
-    def as_xml(self, sanitize=True):
-        if not self._db.has_serializer('xml'):
-            raise ImportError("No xml serializers available")
-        d = self.as_dict(flat=True, sanitize=sanitize)
-        return self._db.serialize('xml', d)
-
-    def as_json(self, sanitize=True):
-        if not self._db.has_serializer('json'):
-            raise ImportError("No json serializers available")
-        d = self.as_dict(flat=True, sanitize=sanitize)
-        return self._db.serialize('json', d)
+        else:
+            return self.__dict__
 
     def parse(self, dquery):
         "Experimental: Turn a dictionary into a Query object"
@@ -2399,6 +2340,9 @@ class Rows(object):
         self.export_to_csv_file(s)
         return s.getvalue()
 
+    def __eq__(self, other):
+        return (self.records == other.records)
+
     def column(self, column=None):
         return [r[str(column) if column else self.colnames[0]] for r in self]
 
@@ -2740,7 +2684,7 @@ class Rows(object):
             return rv.xml()
         return rv
 
-    def as_xml(self,row_name='row',rows_name='rows'):
+    def as_xml(self, row_name='row', rows_name='rows'):
         return self.xml(strict=True, row_name=row_name, rows_name=rows_name)
 
     def as_json(self, mode='object', default=None):
@@ -2749,20 +2693,98 @@ class Rows(object):
         mode='object' is not implemented (should return a nested
         object structure)
         """
-        has_serializer = self.db.has_serializer('json')
-        items = [record.as_json(mode=mode, default=default,
-                                serialize=False,
-                                colnames=self.colnames, datetime_to_str=not(has_serializer)) for
-                 record in self]
+        items = [record.as_json(
+                    mode=mode, default=default, serialize=False,
+                    colnames=self.colnames
+                ) for record in self]
 
-        if has_serializer:
-            custom_json = self.db.serializers.custom_json if \
-                self.db.has_serializer('custom_json') else None
-            return self.db.serialize('json', items,
-                                     default=default or custom_json)
-        else:
-            return json.dumps(items)
+        return serializers.json(items)
 
     # for consistent naming yet backwards compatible
     as_csv = __str__
     json = as_json
+
+
+class IterRows(object):
+
+    def __init__(self, db, sql, fields, colnames, blob_decode, cacheable):
+        self.db = db
+        self.fields = fields
+        self.colnames = colnames
+        self.blob_decode = blob_decode
+        self.cacheable = cacheable
+        (self.fields_virtual, self.fields_lazy, self.tmps) = self.db._adapter._parse_expand_colnames(colnames)
+        self.db._adapter.cursor.execute(sql)
+        self._head = None
+        self.last_item = None
+        self.last_item_id = None
+        self.compact = True
+
+    def next(self):
+        db_row = self.db._adapter.cursor.fetchone()
+        if db_row is None:
+            raise StopIteration
+        row = self.db._adapter._parse(db_row, self.tmps, self.fields,
+                                      self.colnames, self.blob_decode,
+                                      self.cacheable, self.fields_virtual,
+                                      self.fields_lazy)
+        if self.compact:
+            # The following is to translate
+            # <Row {'t0': {'id': 1L, 'name': 'web2py'}}>
+            # in
+            # <Row {'id': 1L, 'name': 'web2py'}>
+            # normally accomplished by Rows.__get_item__
+            keys = row.keys()
+            if len(keys) == 1 and keys[0] != '_extra':
+                row = row[row.keys()[0]]
+        return row
+
+    def __iter__(self):
+        if self._head:
+            yield self._head
+        row = self.next()
+        while row is not None:
+            yield row
+            row = self.next()
+        return
+
+    def first(self):
+        if self._head is None:
+            try:
+                self._head = self.next()
+            except StopIteration:
+                # TODO should I raise something?
+                return None
+        return self._head
+
+    def __nonzero__(self):
+        return True if self.first() is not None else False
+
+    def __getitem__(self, key):
+        if not isinstance( key, ( int, long ) ):
+            raise TypeError
+
+        if key == self.last_item_id:
+            return self.last_item
+
+        n_to_drop = key
+        if self.last_item_id is not None:
+            if self.last_item_id < key:
+                n_to_drop -= (self.last_item_id + 1)
+            else:
+                raise IndexError
+
+        # fetch and drop the first key - 1 elements
+        for i in xrange(n_to_drop):
+            self.db._adapter.cursor.fetchone()
+        row = self.next()
+        if row is None:
+            raise IndexError
+        else:
+            self.last_item_id = key
+            self.last_item = row
+            return row
+
+#    # rowcount it doesn't seem to be reliable on all drivers
+#    def __len__(self):
+#        return self.db._adapter.cursor.rowcount

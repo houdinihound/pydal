@@ -720,18 +720,53 @@ class TestClientLevelOps(unittest.TestCase):
         db.define_table('tt', Field('aa'))
         db.commit()
         db.tt.insert(aa="test")
+        rows1 = db(db.tt.id<0).select()
+        rows2 = db(db.tt.id>0).select()
+        self.assertNotEqual(rows1, rows2)
         rows1 = db(db.tt.id>0).select()
         rows2 = db(db.tt.id>0).select()
+        self.assertEqual(rows1, rows2)
         rows3 = rows1 & rows2
-        assert len(rows3) == 2
+        self.assertEqual(len(rows3), 2)
         rows4 = rows1 | rows2
-        assert len(rows4) == 1
+        self.assertEqual(len(rows4), 1)
         rows5 = rows1.find(lambda row: row.aa=="test")
-        assert len(rows5) == 1
+        self.assertEqual(len(rows5), 1)
         rows6 = rows2.exclude(lambda row: row.aa=="test")
-        assert len(rows6) == 1
+        self.assertEqual(len(rows6), 1)
         rows7 = rows5.sort(lambda row: row.aa)
-        assert len(rows7) == 1
+        self.assertEqual(len(rows7), 1)
+        def represent(f, v, r):
+            return str(v)
+
+        db.representers = {
+            'rows_render': represent,
+        }
+        rows = db(db.tt.id>0).select()
+        rows.render(i=0)
+        rows = db(db.tt.id>0).select()
+        rows.compact=False
+        row = rows[0]
+        self.assertIn('tt', row)
+        self.assertIn('id', row.tt)
+        self.assertNotIn('id', row)
+        rows.compact=True
+        row = rows[0]
+        self.assertNotIn('tt', row)
+        self.assertIn('id', row)
+
+        rows = db(db.tt.id>0).select(db.tt.id.max())
+        rows.compact=False
+        row = rows[0]
+        self.assertNotIn('tt', row)
+        self.assertIn('_extra', row)
+
+        rows = db(db.tt.id>0).select(db.tt.id.max())
+        rows.compact=True
+        row = rows[0]
+        self.assertNotIn('tt', row)
+        self.assertIn('_extra', row)
+
         db.tt.drop()
         db.commit()
         db.close()
@@ -1879,7 +1914,7 @@ class TestSerializers(unittest.TestCase):
         db.close()
 
 
-class TestIterator(unittest.TestCase):
+class TestIterselect(unittest.TestCase):
 
     def testRun(self):
         db = DAL(DEFAULT_URI, check_reserved=['all'])
@@ -1891,10 +1926,49 @@ class TestIterator(unittest.TestCase):
         rows = db(db.t0).select(orderby=db.t0.id)
         for pos, r in enumerate(rows):
             self.assertEqual(r.name, names[pos])
-
+        # Testing basic iteration
         rows = db(db.t0).iterselect(orderby=db.t0.id)
         for pos, r in enumerate(rows):
             self.assertEqual(r.name, names[pos])
+        # Testing IterRows.first before basic iteration
+        rows = db(db.t0).iterselect(orderby=db.t0.id)
+        self.assertEqual(rows.first().name, names[0])
+        self.assertEqual(rows.first().name, names[0])
+
+        for pos, r in enumerate(rows):
+            self.assertEqual(r.name, names[pos])
+        # Testing IterRows.__nonzero__ before basic iteration
+        rows = db(db.t0).iterselect(orderby=db.t0.id)
+        if rows:
+            for pos, r in enumerate(rows):
+                self.assertEqual(r.name, names[pos])
+
+        # Empty iterRows
+        rows = db(db.t0.name=="IterRows").iterselect(orderby=db.t0.id)
+        self.assertEqual(bool(rows), False)
+        for pos, r in enumerate(rows):
+            self.assertEqual(r.name, names[pos])
+
+        # Testing IterRows.__getitem__
+        rows = db(db.t0).iterselect(orderby=db.t0.id)
+        self.assertEqual(rows[0].name, names[0])
+        self.assertEqual(rows[1].name, names[1])
+        # recall the same item
+        self.assertEqual(rows[1].name, names[1])
+        self.assertEqual(rows[2].name, names[2])
+        self.assertRaises(IndexError, rows.__getitem__, 1)
+
+        # Testing IterRows.next()
+        rows = db(db.t0).iterselect(orderby=db.t0.id)
+        for n in names:
+            self.assertEqual(next(rows).name, n)
+        self.assertRaises(StopIteration, next, rows)
+
+        # Testing IterRows.compact
+        rows = db(db.t0).iterselect(orderby=db.t0.id)
+        rows.compact = False
+        for n in names:
+            self.assertEqual(next(rows).t0.name, n)
 
         t0.drop()
         db.close()
