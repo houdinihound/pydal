@@ -4,6 +4,8 @@ import os
 
 PY2 = sys.version_info[0] == 2
 
+_identity = lambda x: x
+
 if PY2:
     import cPickle as pickle
     import cStringIO as StringIO
@@ -23,6 +25,16 @@ if PY2:
         if not isinstance(obj, unicode):
             return unicode(obj)
         return obj
+
+    def implements_iterator(cls):
+        cls.next = cls.__next__
+        del cls.__next__
+        return cls
+
+    def implements_bool(cls):
+        cls.__nonzero__ = cls.__bool__
+        del cls.__bool__
+        return cls
 else:
     import pickle
     from io import StringIO
@@ -42,6 +54,9 @@ else:
         if not isinstance(obj, str):
             return str(obj)
         return obj
+
+    implements_iterator = _identity
+    implements_bool = _identity
 
 
 def with_metaclass(meta, *bases):

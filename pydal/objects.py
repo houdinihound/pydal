@@ -12,7 +12,8 @@ import sys
 import types
 
 from ._compat import PY2, StringIO, ogetattr, osetattr, pjoin, exists, \
-    hashlib_md5, integer_types, basestring, iteritems, xrange
+    hashlib_md5, integer_types, basestring, iteritems, xrange, \
+    implements_bool
 from ._globals import DEFAULT, IDENTITY, AND, OR
 from ._gae import Key
 from .exceptions import NotFoundException, NotAuthorizedException
@@ -34,6 +35,7 @@ DEFAULTLENGTH = {'string': 512, 'password': 512, 'upload': 512, 'text': 2**15,
                  'blob': 2**31}
 
 
+@implements_bool
 class Row(object):
 
     """
@@ -102,8 +104,6 @@ class Row(object):
             return self.__dict__.get(key,default)
 
     has_key = __contains__ = lambda self, key: key in self.__dict__
-
-    __nonzero__ = lambda self: len(self.__dict__)>0
 
     __bool__ = lambda self: len(self.__dict__)>0
 
@@ -1379,6 +1379,7 @@ class FieldMethod(object):
         self.handler = handler
 
 
+@implements_bool
 class Field(Expression, Serializable):
 
     Virtual = FieldVirtual
@@ -1704,7 +1705,7 @@ class Field(Expression, Serializable):
             d["fieldname"] = d.pop("name")
         return d
 
-    def __nonzero__(self):
+    def __bool__(self):
         return True
 
     def __str__(self):
@@ -2698,8 +2699,8 @@ class Rows(object):
     json = as_json
 
 
+@implements_bool
 class IterRows(object):
-
     def __init__(self, db, sql, fields, colnames, blob_decode, cacheable):
         self.db = db
         self.fields = fields
@@ -2750,7 +2751,7 @@ class IterRows(object):
                 return None
         return self._head
 
-    def __nonzero__(self):
+    def __bool__(self):
         return True if self.first() is not None else False
 
     def __getitem__(self, key):
