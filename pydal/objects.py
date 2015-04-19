@@ -11,10 +11,8 @@ import shutil
 import sys
 import types
 
-from ._compat import PY2, StringIO, ogetattr, osetattr, pjoin, exists, hashlib_md5, integer_types, basestring, iteritems, xrange
-from ._globals import GLOBALS, DEFAULT, IDENTITY, AND, OR
-from ._load import json
-from ._compat import StringIO, ogetattr, osetattr, pjoin, exists, hashlib_md5
+from ._compat import PY2, StringIO, ogetattr, osetattr, pjoin, exists, \
+    hashlib_md5, integer_types, basestring, iteritems, xrange
 from ._globals import DEFAULT, IDENTITY, AND, OR
 from ._gae import Key
 from .exceptions import NotFoundException, NotAuthorizedException
@@ -32,11 +30,6 @@ long = integer_types[-1]
 if not PY2:
     from functools import reduce
 
-DEFAULTLENGTH = {'string':512,
-                 'password':512,
-                 'upload':512,
-                 'text':2**15,
-                 'blob':2**31}
 DEFAULTLENGTH = {'string': 512, 'password': 512, 'upload': 512, 'text': 2**15,
                  'blob': 2**31}
 

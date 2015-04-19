@@ -1360,7 +1360,13 @@ class BaseAdapter(with_metaclass(AdapterMeta, ConnectionPool)):
             elif not isinstance(obj, (list, tuple)):
                 obj = [obj]
             if field_is_type('list:string'):
-                obj = list(map(str,obj))
+                if PY2:
+                    try:
+                        obj = map(str, obj)
+                    except:
+                        obj = map(lambda x: unicode(x).encode(self.db_codec), obj)
+                else:
+                    obj = list(map(str,obj))
             else:
                 obj = list(map(int,[o for o in obj if o != '']))
         # we don't want to bar_encode json objects
@@ -1427,16 +1433,6 @@ class BaseAdapter(with_metaclass(AdapterMeta, ConnectionPool)):
             if not 'dumps' in self.driver_auto_json:
                 # always pass a string JSON string
                 obj = serializers.json(obj)
-        if not isinstance(obj, bytes):
-            obj = bytes(obj)
-        try:
-            obj.decode(self.db_codec)
-        except:
-            obj = obj.decode('latin1').encode(self.db_codec)
-                if self.db.has_serializer('json'):
-                    obj = self.db.serialize('json', obj)
-                else:
-                    obj = json.dumps(obj)
         if PY2:
             if not isinstance(obj, bytes):
                 obj = bytes(obj)
@@ -1838,7 +1834,7 @@ class NoSQLAdapter(BaseAdapter):
                 pass
             elif fieldtype == 'json':
                 if isinstance(obj, basestring):
-                    obj = self.to_unicode(obj)
+                    obj = to_unicode(obj)
                     obj = json.loads(obj)
             elif is_string and field_is_type('list:string'):
                 return list(map(to_unicode,obj))

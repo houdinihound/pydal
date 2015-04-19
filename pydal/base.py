@@ -135,7 +135,7 @@ from uuid import uuid4
 
 from ._compat import PY2, pickle, hashlib_md5, pjoin, ogetattr, osetattr, \
     copyreg, integer_types
-from ._globals import GLOBAL_LOCKER, THREAD_LOCAL, DEFAULT, GLOBALS
+from ._globals import GLOBAL_LOCKER, THREAD_LOCAL, DEFAULT
 from ._load import OrderedDict
 from .helpers.classes import Serializable, SQLCallableList
 from .helpers.methods import hide_password, smart_query, auto_validators, \

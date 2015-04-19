@@ -5,7 +5,6 @@ import struct
 import traceback
 
 from .._compat import PY2, exists, copyreg, integer_types
-from .._compat import exists, copyreg
 from .serializers import serializers
 
 
@@ -169,8 +168,6 @@ class RecordUpdater(object):
         table = db[tablename]
         newfields = fields or dict(colset)
         for fieldname in list(newfields.keys()):
-            if not fieldname in table.fields or table[fieldname].type=='id':
-        for fieldname in newfields.keys():
             if fieldname not in table.fields or table[fieldname].type == 'id':
                 del newfields[fieldname]
         table._db(table._id == id, ignore_common_filters=True).update(**newfields)
