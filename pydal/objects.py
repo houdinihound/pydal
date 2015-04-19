@@ -2746,7 +2746,7 @@ class IterRows(object):
     def first(self):
         if self._head is None:
             try:
-                self._head = self.next()
+                self._head = next(self)
             except StopIteration:
                 # TODO should I raise something?
                 return None
@@ -2772,7 +2772,7 @@ class IterRows(object):
         # fetch and drop the first key - 1 elements
         for i in xrange(n_to_drop):
             self.db._adapter.cursor.fetchone()
-        row = self.next()
+        row = next(self)
         if row is None:
             raise IndexError
         else:
