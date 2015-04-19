@@ -13,7 +13,7 @@ import types
 
 from ._compat import PY2, StringIO, ogetattr, osetattr, pjoin, exists, \
     hashlib_md5, integer_types, basestring, iteritems, xrange, \
-    implements_bool
+    implements_iterator, implements_bool
 from ._globals import DEFAULT, IDENTITY, AND, OR
 from ._gae import Key
 from .exceptions import NotFoundException, NotAuthorizedException
@@ -2700,6 +2700,7 @@ class Rows(object):
 
 
 @implements_bool
+@implements_iterator
 class IterRows(object):
     def __init__(self, db, sql, fields, colnames, blob_decode, cacheable):
         self.db = db
@@ -2714,7 +2715,7 @@ class IterRows(object):
         self.last_item_id = None
         self.compact = True
 
-    def next(self):
+    def __next__(self):
         db_row = self.db._adapter.cursor.fetchone()
         if db_row is None:
             raise StopIteration
@@ -2736,10 +2737,10 @@ class IterRows(object):
     def __iter__(self):
         if self._head:
             yield self._head
-        row = self.next()
+        row = next(self)
         while row is not None:
             yield row
-            row = self.next()
+            row = next(self)
         return
 
     def first(self):
@@ -2755,7 +2756,7 @@ class IterRows(object):
         return True if self.first() is not None else False
 
     def __getitem__(self, key):
-        if not isinstance( key, ( int, long ) ):
+        if not isinstance(key, (int, long)):
             raise TypeError
 
         if key == self.last_item_id:
