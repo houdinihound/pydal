@@ -65,9 +65,14 @@ def with_metaclass(meta, *bases):
     # metaclass for one level of class instantiation that replaces itself with
     # the actual metaclass.
     class metaclass(meta):
+        __call__ = type.__call__
+        __init__ = type.__init__
+
         def __new__(cls, name, this_bases, d):
+            if this_bases is None:
+                return type.__new__(cls, name, (), d)
             return meta(name, bases, d)
-    return type.__new__(metaclass, 'temporary_class', (), {})
+    return metaclass('temporary_class', None, {})
 
 
 # shortcuts

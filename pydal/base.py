@@ -134,7 +134,7 @@ import logging
 from uuid import uuid4
 
 from ._compat import PY2, pickle, hashlib_md5, pjoin, ogetattr, osetattr, \
-    copyreg, integer_types
+    copyreg, integer_types, with_metaclass
 from ._globals import GLOBAL_LOCKER, THREAD_LOCAL, DEFAULT
 from ._load import OrderedDict
 from .helpers.classes import Serializable, SQLCallableList
@@ -175,7 +175,7 @@ class MetaDAL(type):
         return obj
 
 
-class DAL(Serializable):
+class DAL(with_metaclass(MetaDAL, Serializable)):
     """
     An instance of this class represents a database connection
 
@@ -249,8 +249,6 @@ class DAL(Serializable):
 
 
     """
-    __metaclass__ = MetaDAL
-
     serializers = None
     validators = None
     validators_method = None
