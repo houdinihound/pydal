@@ -1,6 +1,9 @@
 import datetime
 import decimal
 import json as jsonlib
+from .._compat import PY2, integer_types
+
+long = integer_types[-1]
 
 
 class Serializers(object):
@@ -34,8 +37,10 @@ class Serializers(object):
 
     def json(self, value):
         value = jsonlib.dumps(value, default=self._json_parse)
-        return value.replace(ur'\u2028', '\\u2028').replace(
-            ur'\2029', '\\u2029')
+        if PY2:
+            return value.replace(ur'\u2028', '\\u2028').replace(
+                ur'\2029', '\\u2029')
+        return value.replace(r'\u2028', '\\u2028').replace(r'\2029', '\\u2029')
 
     def yaml(self, value):
         if self._custom_.get('yaml') is not None:
